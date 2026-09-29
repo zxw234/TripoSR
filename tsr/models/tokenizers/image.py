@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 
 import torch
 import torch.nn as nn
@@ -18,13 +19,16 @@ class DINOSingleImageTokenizer(BaseModule):
     cfg: Config
 
     def configure(self) -> None:
-        self.model: ViTModel = ViTModel(
-            ViTModel.config_class.from_pretrained(
-                hf_hub_download(
-                    repo_id=self.cfg.pretrained_model_name_or_path,
-                    filename="config.json",
-                )
+        repo = self.cfg.pretrained_model_name_or_path
+        if os.path.isdir(repo) and os.path.isfile(os.path.join(repo, "config.json")):
+            config_file = os.path.join(repo, "config.json")
+        else:
+            config_file = hf_hub_download(
+                repo_id=repo,
+                filename="config.json",
             )
+        self.model: ViTModel = ViTModel(
+            ViTModel.config_class.from_pretrained(config_file)
         )
 
         if self.cfg.enable_gradient_checkpointing:

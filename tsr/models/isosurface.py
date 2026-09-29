@@ -3,7 +3,23 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
-from torchmcubes import marching_cubes
+
+try:
+    from torchmcubes import marching_cubes as _torch_mcubes
+
+    def _marching_cubes(volume: torch.Tensor, isovalue: float):
+        return _torch_mcubes(volume, isovalue)
+
+except Exception:
+    from skimage.measure import marching_cubes as _sk_mcubes
+
+    def _marching_cubes(volume: torch.Tensor, isovalue: float):
+        # skimage fallback (no CUDA compile needed)
+        vol = volume.detach().cpu().numpy().astype(np.float32)
+        verts, faces, _normals, _values = _sk_mcubes(vol, level=float(isovalue))
+        v = torch.from_numpy(verts.astype(np.float32))
+        f = torch.from_numpy(faces.astype(np.int64))
+        return v, f
 
 
 class IsosurfaceHelper(nn.Module):
@@ -18,7 +34,7 @@ class MarchingCubeHelper(IsosurfaceHelper):
     def __init__(self, resolution: int) -> None:
         super().__init__()
         self.resolution = resolution
-        self.mc_func: Callable = marching_cubes
+        self.mc_func: Callable = _marching_cubes
         self._grid_vertices: Optional[torch.FloatTensor] = None
 
     @property
@@ -47,6 +63,13 @@ class MarchingCubeHelper(IsosurfaceHelper):
         except AttributeError:
             print("torchmcubes was not compiled with CUDA support, use CPU version instead.")
             v_pos, t_pos_idx = self.mc_func(level.detach().cpu(), 0.0)
-        v_pos = v_pos[..., [2, 1, 0]]
+        # skimage returns XYZ already in array index order; torchmcubes needs axis swap
+        if v_pos.shape[-1] == 3:
+            # Keep consistent with upstream torchmcubes path when available
+            try:
+                from torchmcubes import marching_cubes as _  # noqa: F401
+                v_pos = v_pos[..., [2, 1, 0]]
+            except Exception:
+                pass
         v_pos = v_pos / (self.resolution - 1.0)
         return v_pos.to(level.device), t_pos_idx.to(level.device)
